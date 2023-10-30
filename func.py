@@ -1,6 +1,6 @@
 import psycopg2
 
-def connect_database():
+def connectDatabase():
   print("chamada func")
   try:
     print("dentro try")
@@ -13,3 +13,32 @@ def connect_database():
   except psycopg2.DatabaseError as error:
     print(error)
     exit()
+
+def closeDatabase(conn):
+  conn.close()
+
+def createTable():
+  psql = (
+    """drop table if exists dados;""",
+
+        """create table dados(
+            id serial,
+            A integer not null,
+            B integer not null,
+            constraint pk primary key (id)
+        );"""
+  )
+  try:
+    conn = connectDatabase()
+    cursor = conn.cursor()
+    
+    for command in commands:
+      cursor.execute(command)
+    cursor.close()
+    conn.commit()
+
+  except (Exception, psycopg2.DatabaseError) as Error:
+    print(error)
+  closeDatabase(cursor)
+
+createTable()
