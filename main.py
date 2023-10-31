@@ -1,3 +1,5 @@
 from func import *
 
-connectDatabase()
+createTable()
+insertData()
+readLog()
