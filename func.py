@@ -1,6 +1,9 @@
 import psycopg2
 import json
 import re
+from file_read_backwards import FileReadBackwards
+
+listaSemCommit = []
 
 def connectDatabase():
   try:
@@ -66,107 +69,54 @@ def insertData():
     file.close()
 
 def readLog():
-    with open('entradaLog', 'r') as file:
-        log = file.readlines()
+    conn = connectDatabase()
+    cursor = conn.cursor()
+    log = lerArquivo()
+    print(log)
+    regex = ''
+    with FileReadBackwards('entradaLog', encoding="utf-8") as file:
+      for line in file:
+          print(line)
+          if "END CKPT" in line:
+              break
+          if 'start' in line:
+              transacao = line[-3:-1]
+              regex = r"<commit {}>".format(transacao)
+              vazio = not re.search(regex, lerArquivo())
+              if(vazio):
+                    listaSemCommit.append(transacao)
+    checkpoint = listaSemCommit[::-1]
+    undo(cursor)
+    printTransactions(checkpoint)
+    printInitial(cursor)
 
-    listaCommit = []
-    listaStart = []
-    listaCKPT = []
-    listaOperacoes = []
-    listaUndo = []
-    for line in log:
-        if line.startswith("<END CKPT>"):
-            break
-        if line.startswith("<start"):
-            listaStart.append(line)
-        elif line.startswith("<T"):
-            listaOperacoes.append(line)
-        elif line.startswith("<commit"):
-            listaCommit.append(line.strip("<>"))
-        elif line.startswith("<START CKPT"):
-            transacao = re.findall(r'T\d', line)
-            if transacao:
-                listaCKPT.extend(transacao)
 
-    listaStart.reverse()
-    listaOperacoes.reverse()
-    listaCommit.reverse()
-
-    print(f"Lista de Starts: {listaStart}")
-    print(f"Lista de Operacoes: {listaOperacoes}")
-    print(f"Lista de Commits: {listaCommit}")
-    print(f"Lista de Checkpoints: {listaCKPT}")
-
-    for commit in listaCommit:
-        transacao = commit.split()[1]
-        listaUndo.append(transacao)
-
-    print(f"Lista de Undo: {listaUndo}")
-    undo(listaCKPT, listaOperacoes, listaCommit, listaStart)
-
-def undo(CKPT, OP, COMMIT, START):
-    undo = []
-    listaOperacao = []
-    print(COMMIT)
-    for commmit in COMMIT:
-        commmit = re.sub('[<>]', '', commmit)
-        commmit = re.split(" ", commmit)
-
-        print(f"Transação {commmit[1]} realizou UNDO")
-        undo.append(commmit[1])
-
-        if len(CKPT) >= 1 and commmit[1] in CKPT:
-            CKPT.remove(commmit[1])
-
-    if len(CKPT) >= 1:     
-        for trn in CKPT:
-            print(f"Transação {trn} não realizou UNDO")
-    print(undo)
-    for un in undo:
-        for operacao in OP:
-            match = re.search(un, operacao)
-            if match:
-                listaOperacao.append(operacao)
-  
-    listaOperacao.reverse()
-
-    for operacao in listaOperacao:
-        operacao = re.sub('[<>]', '', operacao)
-        operacao = re.split(",", operacao)
-
-        idTupla = operacao[1]
-        coluna = operacao[2]
-        valorAntigo = operacao[3]
-
-        try:
-            conn = connectDatabase()
-            cur = conn.cursor()
-
-            command = ("""SELECT """ + coluna + """ FROM dados WHERE id = """ + idTupla)
-
-            cur.execute(command)
-            tuple = cur.fetchone()[0]
-
-            if tuple == valorAntigo:
-                break
-            else:
-                command = ("""UPDATE dados SET """ + coluna + """ = """ + valorAntigo + """ where id = """ + idTupla)
-                cur.execute(command)
-
-                printInitial(cur)
-                cur.close()
-                conn.commit()
-
-        finally:
-            closeDatabase(conn)
-
-def printInitial(cur):
+def undo(cursor):
+  file = open('entradaLog', 'r')
+  for transaction in listaSemCommit:
+                file.seek(0)
+                conteudo = file.read()
+                inicioTransaction = conteudo.index('<start '+ transaction +'>')
+                file.seek(inicioTransaction)
+                for line in file:
+                    matches = re.search('<'+ transaction +',(.+?)>', line)
+                    if('<commit '+ transaction +'>' in line):
+                         continue
+                    if matches:
+                        values = matches.group(1).split(',')
+                        cursor.execute('SELECT ' + values[1] + ' FROM dados WHERE id = ' + values[0])
+                        tuple = cursor.fetchone()[0]
+                        print(tuple)
+                        if(int(values[2]) != tuple):
+                            cursor.execute(f'UPDATE dados SET {values[1]} = {values[2]} WHERE id = {values[0]}')
+                            print('Na linha ' + values[0] + ' a coluna ' + values[1] + ' era ' + str(tuple) + ' e os novos valores sao: ' + values[2])
+def printInitial(cursor):
     id = []
     a = []
     b = []
 
-    cur.execute('SELECT * FROM dados ORDER BY id')
-    tuples = cur.fetchall()
+    cursor.execute('SELECT * FROM dados ORDER BY id')
+    tuples = cursor.fetchall()
 
     for tuple in tuples:
         id.append(tuple[0])
@@ -182,3 +132,12 @@ def printInitial(cur):
           }
         }
       ''')
+
+def printTransactions(committed_transactions):
+  for transaction in committed_transactions:
+      print('Transação '+ transaction +': realizou UNDO')
+
+def lerArquivo():
+      with FileReadBackwards('entradaLog', encoding="utf-8") as file:
+        log='\n'.join(file)
+      return log
